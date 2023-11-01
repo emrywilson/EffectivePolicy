@@ -37,11 +37,11 @@ conn = psycopg2.connect(
 )
 cursor = conn.cursor()
 
-# cursor.execute('''INSERT INTO "IAM_User"("Name", "ARN") VALUES('{0}', '{1}')'''.format(IAM_user, user_arn))
-# conn.commit()
+cursor.execute('''INSERT INTO "IAM_User"("Name", "ARN") VALUES('{0}', '{1}')'''.format(IAM_user, user_arn))
+conn.commit()
 
-# cursor.execute('''SELECT "Name" FROM "IAM_User"''')
-# print(cursor.fetchall())
+cursor.execute('''SELECT "Name" FROM "IAM_User"''')
+print(cursor.fetchall())
 
 
 # # get inline polcies
@@ -64,26 +64,27 @@ cursor = conn.cursor()
 
 #get groups (if any) and policies for the groups
 groups = []
-group_names = []
-groups = client.list_groups_for_user(
+groups = []
+list_groups = client.list_groups_for_user(
     UserName=IAM_user
 )
-# for group in groups['Groups']:
-#     group_names.append(group['GroupName'])
-#     cursor.execute('''INSERT INTO "Group"("Name", "ARN") VALUES('{0}', '{1}')'''.format(group['GroupName'], group['Arn']))
-    # cursor.execute('''INSERT INTO "Member"("IAM_UserARN", "GroupARN") VALUES('{0}', '{1}')'''.format(user_arn, group['Arn']))
-    # conn.commit()
+for group in list_groups['Groups']:
+    groups.append(group)
+    cursor.execute('''INSERT INTO "Group"("Name", "ARN") VALUES('{0}', '{1}')'''.format(group['GroupName'], group['Arn']))
+    cursor.execute('''INSERT INTO "Member"("IAM_UserARN", "GroupARN") VALUES('{0}', '{1}')'''.format(user_arn, group['Arn']))
+    conn.commit()
 cursor.execute('''SELECT "Name" from "Group" JOIN "Member" on "Group"."ARN" = "Member"."GroupARN" WHERE "Member"."IAM_UserARN" = '{0}' '''.format(user_arn))
 print(cursor.fetchall())   
 
-# logging.info('Getting group policies for IAM user')
-# for group in group_names:
-#     group_policies = client.list_attached_group_policies(
-#         GroupName=group
-#     )
-#     inline_group_policies = (client.list_group_policies(
-#         GroupName=group
-#     ))
+
+logging.info('Getting group policies for IAM user')
+for g in groups:
+    group_policies = client.list_attached_group_policies(
+        GroupName=g['GroupName']
+    )
+    inline_group_policies = (client.list_group_policies(
+        GroupName=g['GroupName']
+    ))
 
 # # open and name outfile
 # output_filename = IAM_user + "_effective_policy.json"
@@ -180,34 +181,41 @@ print(cursor.fetchall())
 #     outfile.write('}')
 #     outfile.write(',')
 
-# # get the group polcies' permissions and add to json output
-# if group_names != []:  
-#     for name in group_names: 
-#         for gpolicy in group_policies['AttachedPolicies']:
-#             policy = client.get_policy(
-#                 PolicyArn = gpolicy['PolicyArn']
-#             )
-#             policy_version = client.get_policy_version(
-#                 PolicyArn = gpolicy['PolicyArn'], 
-#                 VersionId = policy['Policy']['DefaultVersionId']
-#             )['PolicyVersion']
-#             get_role_policies(policy_version)
-#             policy_name =  '{ "' + gpolicy['PolicyName'] + '":'
-#             outfile.write(policy_name)  
-#             outfile.write(json.dumps(policy_version['Document'], indent=4))
-#             outfile.write('}')
-#             outfile.write(',')
-#         for igpolicy in inline_group_policies['PolicyNames']:
-#             ipolicy = client.get_group_policy(
-#                 GroupName = name,
-#                 PolicyName = igpolicy
-#             )
-#             get_role_policies(ipolicy)
-#             policy_name =  '{ "' + igpolicy + '":'
-#             outfile.write(policy_name) 
-#             outfile.write(json.dumps(ipolicy['PolicyDocument'], indent=4))  
-#             outfile.write('}')  
-#             outfile.write(',')
+# get the group polcies' permissions and add to json output
+if groups != []:  
+    for group in groups: 
+        for gpolicy in group_policies['AttachedPolicies']:
+            policy = client.get_policy(
+                PolicyArn = gpolicy['PolicyArn']
+            )
+            policy_version = client.get_policy_version(
+                PolicyArn = gpolicy['PolicyArn'], 
+                VersionId = policy['Policy']['DefaultVersionId']
+            )['PolicyVersion']
+            cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}')'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
+            cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
+            conn.commit()
+            # get_role_policies(policy_version)
+            # policy_name =  '{ "' + gpolicy['PolicyName'] + '":'
+            # outfile.write(policy_name)  
+            # outfile.write(json.dumps(policy_version['Document'], indent=4))
+            # outfile.write('}')
+            # outfile.write(',')
+        for igpolicy in inline_group_policies['PolicyNames']:
+            ipolicy = client.get_group_policy(
+                GroupName = group['GroupName'],
+                PolicyName = igpolicy
+            )
+            print(ipolicy)
+            cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}')'''.format('Inline', igpolicy))
+            cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
+            conn.commit()
+            # get_role_policies(ipolicy)
+            # policy_name =  '{ "' + igpolicy + '":'
+            # outfile.write(policy_name) 
+            # outfile.write(json.dumps(ipolicy['PolicyDocument'], indent=4))  
+            # outfile.write('}')  
+            # outfile.write(',')
             
 
 # outfile.write('{}')
