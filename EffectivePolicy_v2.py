@@ -45,23 +45,23 @@ cursor.execute('''SELECT "Name" FROM "IAM_User"''')
 print(cursor.fetchall())
 
 
-# # get inline polcies
-# logging.info('Getting inline policies for IAM user')
-# inline_policies = client.list_user_policies(
-#     UserName=IAM_user
-# )
+# get inline polcies
+logging.info('Getting inline policies for IAM user')
+inline_policies = client.list_user_policies(
+    UserName=IAM_user
+)
 
-# # get all managed policies (aws and customer)
-# logging.info('Getting AWS managed policies for IAM user')
-# managed_policies = client.list_attached_user_policies(
-#     UserName=IAM_user
-# )
+# get all managed policies (aws and customer)
+logging.info('Getting AWS managed policies for IAM user')
+managed_policies = client.list_attached_user_policies(
+    UserName=IAM_user
+)
 
-# # get only customer managed policies
-# logging.info('Getting customer managed policies for IAM user')
-# customer_managed_policies = client.list_policies(
-#      Scope='Local'
-# )
+# get only customer managed policies
+logging.info('Getting customer managed policies for IAM user')
+customer_managed_policies = client.list_policies(
+     Scope='Local'
+)
 
 #get groups (if any) and policies for the groups
 groups = []
@@ -87,10 +87,7 @@ for g in groups:
         GroupName=g['GroupName']
     ))
 
-# # open and name outfile
-# output_filename = IAM_user + "_effective_policy.json"
-# outfile = open(output_filename, "w")
-# outfile.write('[')
+
 
 # # check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
 # def get_role_policies(policy):
@@ -153,12 +150,19 @@ for g in groups:
 #                 outfile.write(',')
 
 
-# # get the inline polcies' permissions and add to json output
-# for ipolicy in inline_policies['PolicyNames']:
-#     policy = client.get_user_policy(
-#         UserName = IAM_user,
-#         PolicyName = ipolicy
-#     )
+# get the inline polcies' permissions and insert to database
+for ipolicy in inline_policies['PolicyNames']:
+    policy = client.get_user_policy(
+        UserName = IAM_user,
+        PolicyName = ipolicy
+    )
+    cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Inline', ipolicy))
+    id = cursor.fetchone()[0]
+    print(id)
+    cursor.execute('''INSERT INTO "Assign"("UserARN", "Policyid") VALUES('{0}', {1})'''.format(user_arn, id))
+    conn.commit()
+    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
+    conn.commit()
 #     get_role_policies(policy)  
 #     policy_name =  '{ "' + ipolicy + '":'
 #     outfile.write(policy_name)  
@@ -196,7 +200,7 @@ if groups != []:
             cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
             id = cursor.fetchone()[0]
             print(id)
-            cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
+            cursor.execute('''INSERT INTO "Assign"("GroupARN", "Policyid") VALUES('{0}', {1})'''.format(group['Arn'], id))
             conn.commit()
             cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
             conn.commit()
@@ -215,7 +219,7 @@ if groups != []:
             cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Inline', igpolicy))
             id = cursor.fetchone()[0]
             print(id)
-            cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
+            cursor.execute('''INSERT INTO "Assign"("GroupARN", "Policyid") VALUES('{0}', {1})'''.format(group['Arn'], id))
             conn.commit()
 
             cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
