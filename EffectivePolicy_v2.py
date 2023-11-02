@@ -1,3 +1,4 @@
+
 import json
 import boto3
 import argparse
@@ -192,8 +193,12 @@ if groups != []:
                 PolicyArn = gpolicy['PolicyArn'], 
                 VersionId = policy['Policy']['DefaultVersionId']
             )['PolicyVersion']
-            cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}')'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
+            cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
+            id = cursor.fetchone()[0]
+            print(id)
             cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
+            conn.commit()
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
             conn.commit()
             # get_role_policies(policy_version)
             # policy_name =  '{ "' + gpolicy['PolicyName'] + '":'
@@ -207,9 +212,18 @@ if groups != []:
                 PolicyName = igpolicy
             )
             print(ipolicy)
-            cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}')'''.format('Inline', igpolicy))
+            cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Inline', igpolicy))
+            id = cursor.fetchone()[0]
+            print(id)
             cursor.execute('''INSERT INTO "Assign"("GroupARN") VALUES('{0}')'''.format(group['Arn']))
             conn.commit()
+
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
+            conn.commit()
+            # for statement in ipolicy['PolicyDocument']['Statement']:
+            #     print(statement)
+            #     cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(statement, id))
+            #     conn.commit()
             # get_role_policies(ipolicy)
             # policy_name =  '{ "' + igpolicy + '":'
             # outfile.write(policy_name) 
