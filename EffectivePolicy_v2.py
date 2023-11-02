@@ -1,4 +1,3 @@
-
 import json
 import boto3
 import argparse
@@ -25,24 +24,25 @@ else:
 session = boto3.Session(profile_name=profile_name)
 client = session.client('iam')
 
+
+#get IAM user arn
 user_info = client.get_user(
     UserName = IAM_user
 )
-
 user_arn = user_info["User"]["Arn"]
-print(user_arn)
 
+
+#connect to database
 password = args.dbpassword
 conn = psycopg2.connect(
    database='effectivepolicy', user='postgres', password=password, host='localhost', port= '5432'
 )
 cursor = conn.cursor()
 
+
+#insert IAM user to database
 cursor.execute('''INSERT INTO "IAM_User"("Name", "ARN") VALUES('{0}', '{1}')'''.format(IAM_user, user_arn))
 conn.commit()
-
-cursor.execute('''SELECT "Name" FROM "IAM_User"''')
-print(cursor.fetchall())
 
 
 # get inline polcies
@@ -74,9 +74,6 @@ for group in list_groups['Groups']:
     cursor.execute('''INSERT INTO "Group"("Name", "ARN") VALUES('{0}', '{1}')'''.format(group['GroupName'], group['Arn']))
     cursor.execute('''INSERT INTO "Member"("IAM_UserARN", "GroupARN") VALUES('{0}', '{1}')'''.format(user_arn, group['Arn']))
     conn.commit()
-cursor.execute('''SELECT "Name" from "Group" JOIN "Member" on "Group"."ARN" = "Member"."GroupARN" WHERE "Member"."IAM_UserARN" = '{0}' '''.format(user_arn))
-print(cursor.fetchall())   
-
 
 logging.info('Getting group policies for IAM user')
 for g in groups:
@@ -89,65 +86,73 @@ for g in groups:
 
 
 
-# # check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
-# def get_role_policies(policy):
-#     assume_role = False
-#     role_arn = ""
-#     if 'PolicyDocument' in policy:
-#         for key in policy['PolicyDocument']['Statement']:
-#             if assume_role == False:
-#                 if key == 'Action' and policy['PolicyDocument']['Statement'][key] == 'sts:AssumeRole':
-#                     assume_role = True
-#                     continue
-#             if assume_role == True and key == 'Resource':
-#                 role_arn = policy['PolicyDocument']['Statement'][key]
-#         role_name = role_arn.split('/')[-1]
-#         role_name.strip()
-#         if role_name != "":
-#             logging.info('Getting role policies for roles the IAM user can assume')
-#             role_policies = client.list_attached_role_policies(
-#                 RoleName = role_name
-#             )
-#             for rpolicy in role_policies['AttachedPolicies']:
-#                 role_policy = client.get_policy(
-#                     PolicyArn = rpolicy['PolicyArn']
-#                 )
-#                 policy_version = client.get_policy_version(
-#                     PolicyArn = rpolicy['PolicyArn'], 
-#                     VersionId = role_policy['Policy']['DefaultVersionId']
-#                 )['PolicyVersion']
-#                 policy_name =  '{ "' + rpolicy['PolicyName'] + '":'
-#                 outfile.write(policy_name)  
-#                 outfile.write(json.dumps(policy_version['Document'], indent=4))
-#                 outfile.write('}')
-#                 outfile.write(',')
-#     elif 'Document' in policy:
-#         for key in policy['Document']['Statement']:
-#             if assume_role == False:
-#                 if key == 'Action' and policy['Statement'][key] == 'sts:AssumeRole':
-#                     assume_role = True
-#             if assume_role == True and key == 'Resource':
-#                 role_arn = policy['Statement'][key]
-#         role_name = role_arn.split('/')[-1]
-#         role_name.strip()
-#         if role_name != "":
-#             logging.info('Getting role policies for roles the IAM user can assume')
-#             role_policies = client.list_attached_role_policies(
-#                 RoleName = role_name
-#             )
-#             for rpolicy in role_policies['AttachedPolicies']:
-#                 role_policy = client.get_policy(
-#                     PolicyArn = rpolicy['PolicyArn']
-#                 )
-#                 policy_version = client.get_policy_version(
-#                     PolicyArn = rpolicy['PolicyArn'], 
-#                     VersionId = role_policy['Policy']['DefaultVersionId']
-#                 )['PolicyVersion']
-#                 policy_name =  '{ "' + rpolicy['PolicyName'] + '":'
-#                 outfile.write(policy_name)  
-#                 outfile.write(json.dumps(policy_version['Document'], indent=4))
-#                 outfile.write('}')
-#                 outfile.write(',')
+# check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
+def get_role_policies(policy):
+    assume_role = False
+    role_arn = ""
+    if 'PolicyDocument' in policy:
+        for key in policy['PolicyDocument']['Statement']:
+            if assume_role == False:
+                if key == 'Action' and policy['PolicyDocument']['Statement'][key] == 'sts:AssumeRole':
+                    assume_role = True
+                    continue
+            if assume_role == True and key == 'Resource':
+                role_arn = policy['PolicyDocument']['Statement'][key]
+        role_name = role_arn.split('/')[-1]
+        role_name.strip()
+        if role_name != "":
+            cursor.execute('''INSERT INTO "Role"("Name", "ARN") VALUES('{0}', '{1}')'''.format(role_name, role_arn))
+            cursor.execute('''INSERT INTO "Assume"("IAM_UserARN", "RoleARN") VALUES('{0}', '{1}')'''.format(user_arn, role_arn))
+            conn.commit()
+            logging.info('Getting role policies for roles the IAM user can assume')
+            role_policies = client.list_attached_role_policies(
+                RoleName = role_name
+            )
+            for rpolicy in role_policies['AttachedPolicies']:
+                role_policy = client.get_policy(
+                    PolicyArn = rpolicy['PolicyArn']
+                )
+                policy_version = client.get_policy_version(
+                    PolicyArn = rpolicy['PolicyArn'], 
+                    VersionId = role_policy['Policy']['DefaultVersionId']
+                )['PolicyVersion']
+                cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(rpolicy['PolicyArn'], 'Role - Inline', rpolicy['PolicyName']))
+                id = cursor.fetchone()[0]
+                cursor.execute('''INSERT INTO "Assign"("RoleARN", "Policyid") VALUES('{0}', {1})'''.format(role_arn, id))
+                conn.commit()
+                cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                conn.commit()
+    elif 'Document' in policy:
+        for key in policy['Document']['Statement']:
+            if assume_role == False:
+                if key == 'Action' and policy['Statement'][key] == 'sts:AssumeRole':
+                    assume_role = True
+            if assume_role == True and key == 'Resource':
+                role_arn = policy['Statement'][key]
+        role_name = role_arn.split('/')[-1]
+        role_name.strip()
+        if role_name != "":
+            cursor.execute('''INSERT INTO "Role"("Name", "ARN") VALUES('{0}', '{1}')'''.format(role_name, role_arn))
+            cursor.execute('''INSERT INTO "Assume"("IAM_UserARN", "RoleARN") VALUES('{0}', '{1}')'''.format(user_arn, role_arn))
+            conn.commit()
+            logging.info('Getting role policies for roles the IAM user can assume')
+            role_policies = client.list_attached_role_policies(
+                RoleName = role_name
+            )
+            for rpolicy in role_policies['AttachedPolicies']:
+                role_policy = client.get_policy(
+                    PolicyArn = rpolicy['PolicyArn']
+                )
+                policy_version = client.get_policy_version(
+                    PolicyArn = rpolicy['PolicyArn'], 
+                    VersionId = role_policy['Policy']['DefaultVersionId']
+                )['PolicyVersion']
+                cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(rpolicy['PolicyArn'], 'Role - Managed', rpolicy['PolicyName']))
+                id = cursor.fetchone()[0]
+                cursor.execute('''INSERT INTO "Assign"("RoleARN", "Policyid") VALUES('{0}', {1})'''.format(role_arn, id))
+                conn.commit()
+                cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                conn.commit()
 
 
 # get the inline polcies' permissions and insert to database
@@ -156,37 +161,34 @@ for ipolicy in inline_policies['PolicyNames']:
         UserName = IAM_user,
         PolicyName = ipolicy
     )
-    cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Inline', ipolicy))
+    get_role_policies(policy) 
+    cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('User - Inline', ipolicy))
     id = cursor.fetchone()[0]
-    print(id)
     cursor.execute('''INSERT INTO "Assign"("UserARN", "Policyid") VALUES('{0}', {1})'''.format(user_arn, id))
     conn.commit()
-    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
+    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
     conn.commit()
-#     get_role_policies(policy)  
-#     policy_name =  '{ "' + ipolicy + '":'
-#     outfile.write(policy_name)  
-#     outfile.write(json.dumps(policy['PolicyDocument'], indent=4))
-#     outfile.write('}')
-#     outfile.write(',')
 
-# # get the managed (aws and customer) polcies' permissions and add to json output
-# for mpolicy in managed_policies['AttachedPolicies']:
-#     policy = client.get_policy(
-#         PolicyArn = mpolicy['PolicyArn']
-#     ) 
-#     policy_version = client.get_policy_version(
-#         PolicyArn = mpolicy['PolicyArn'], 
-#         VersionId = policy['Policy']['DefaultVersionId']
-#     )['PolicyVersion']
-#     get_role_policies(policy_version)
-#     policy_name =  '{ "' + mpolicy['PolicyName'] + '":'
-#     outfile.write(policy_name)  
-#     outfile.write(json.dumps(policy_version['Document'], indent=4))
-#     outfile.write('}')
-#     outfile.write(',')
 
-# get the group polcies' permissions and add to json output
+# get the managed (aws and customer) polcies' permissions and insert to database
+for mpolicy in managed_policies['AttachedPolicies']:
+    policy = client.get_policy(
+        PolicyArn = mpolicy['PolicyArn']
+    ) 
+    policy_version = client.get_policy_version(
+        PolicyArn = mpolicy['PolicyArn'], 
+        VersionId = policy['Policy']['DefaultVersionId']
+    )['PolicyVersion']
+    get_role_policies(policy_version)
+    cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(mpolicy['PolicyArn'], 'User - Managed', mpolicy['PolicyName']))
+    id = cursor.fetchone()[0]
+    cursor.execute('''INSERT INTO "Assign"("UserARN", "Policyid") VALUES('{0}', {1})'''.format(user_arn, id))
+    conn.commit()
+    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
+    conn.commit()
+
+
+# get the group polcies' permissions and insert to database
 if groups != []:  
     for group in groups: 
         for gpolicy in group_policies['AttachedPolicies']:
@@ -197,45 +199,27 @@ if groups != []:
                 PolicyArn = gpolicy['PolicyArn'], 
                 VersionId = policy['Policy']['DefaultVersionId']
             )['PolicyVersion']
-            cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
+            get_role_policies(policy_version)
+            cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') RETURNING "Statementid"'''.format(gpolicy['PolicyArn'], 'Group - Managed', gpolicy['PolicyName']))
             id = cursor.fetchone()[0]
-            print(id)
+
             cursor.execute('''INSERT INTO "Assign"("GroupARN", "Policyid") VALUES('{0}', {1})'''.format(group['Arn'], id))
             conn.commit()
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(policy_version['Document']['Statement']), id))
             conn.commit()
-            # get_role_policies(policy_version)
-            # policy_name =  '{ "' + gpolicy['PolicyName'] + '":'
-            # outfile.write(policy_name)  
-            # outfile.write(json.dumps(policy_version['Document'], indent=4))
-            # outfile.write('}')
-            # outfile.write(',')
         for igpolicy in inline_group_policies['PolicyNames']:
             ipolicy = client.get_group_policy(
                 GroupName = group['GroupName'],
                 PolicyName = igpolicy
             )
-            print(ipolicy)
-            cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Inline', igpolicy))
+            get_role_policies(ipolicy)
+            cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') RETURNING "Statementid"'''.format('Group - Inline', igpolicy))
             id = cursor.fetchone()[0]
-            print(id)
+
             cursor.execute('''INSERT INTO "Assign"("GroupARN", "Policyid") VALUES('{0}', {1})'''.format(group['Arn'], id))
             conn.commit()
 
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1})'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
             conn.commit()
-            # for statement in ipolicy['PolicyDocument']['Statement']:
-            #     print(statement)
-            #     cursor.execute('''INSERT INTO "Statement"("WholeStatement", "id") VALUES('{0}', {1})'''.format(statement, id))
-            #     conn.commit()
-            # get_role_policies(ipolicy)
-            # policy_name =  '{ "' + igpolicy + '":'
-            # outfile.write(policy_name) 
-            # outfile.write(json.dumps(ipolicy['PolicyDocument'], indent=4))  
-            # outfile.write('}')  
-            # outfile.write(',')
-            
 
-# outfile.write('{}')
-# outfile.write(']')
 
