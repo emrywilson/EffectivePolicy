@@ -7,13 +7,11 @@ import psycopg2
 logger = logging.getLogger()
 
 parser = argparse.ArgumentParser()
-#parser.add_argument('user', help='IAM user to get the effective policy for')
 parser.add_argument('profile', help='base aws profile to use')
 parser.add_argument('dbpassword', help='password to access database')
 parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
 args = parser.parse_args()
 profile_name = args.profile
-#IAM_user = args.user
 password = args.dbpassword
 
 if args.verbose:
@@ -53,19 +51,19 @@ for user in all_users['Users']:
 
 
     # get inline polcies
-    logging.info('Getting inline policies for IAM user')
+    logging.info('Getting inline policies for ' + IAM_user)
     inline_policies = client.list_user_policies(
         UserName=IAM_user
     )
 
     # get all managed policies (aws and customer)
-    logging.info('Getting AWS managed policies for IAM user')
+    logging.info('Getting AWS managed policies for ' + IAM_user)
     managed_policies = client.list_attached_user_policies(
         UserName=IAM_user
     )
 
     # get only customer managed policies
-    logging.info('Getting customer managed policies for IAM user')
+    logging.info('Getting customer managed policies for ' + IAM_user)
     customer_managed_policies = client.list_policies(
         Scope='Local'
     )
@@ -75,7 +73,7 @@ for user in all_users['Users']:
     groups = client.list_groups_for_user(
         UserName=IAM_user
     )
-    logging.info('Getting group policies for IAM user')
+    logging.info('Getting group policies for ' + IAM_user)
     for g in groups['Groups']:
         cursor.execute('''INSERT INTO "Identity"("Name", "ARN", "Type") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING;'''.format(g['GroupName'], g['Arn'], "Group"))
         cursor.execute('''INSERT INTO "Assume"("IAM_UserARN", "IdentityARN") VALUES('{0}', '{1}') ON CONFLICT ("IAM_UserARN", "IdentityARN") DO NOTHING;'''.format(user_arn, g['Arn']))
@@ -87,14 +85,14 @@ for user in all_users['Users']:
             GroupName=g['GroupName']
         ))
 
-    def extract_statement(statement, id):
-        effect = None
-        sid = None
-        action = None
-        princ = None
-        rsc = None
+    #get each permissions in a policy's statement, INSERT into permissions table
+    def extract_permissions(statement, id):
+        effect = ""
+        sid = ""
+        action =""
+        princ = ""
+        rsc = ""
         cond = None
-
         if isinstance(statement, list):
             for stmt in statement:
                 if 'Effect' in stmt:
@@ -103,9 +101,9 @@ for user in all_users['Users']:
                     sid = stmt['Sid']
                 if 'Action' in stmt:
                     if not isinstance(stmt['Action'], list):
-                        action = list(stmt['Action'].split(" "))
-                    elif isinstance(stmt['Action'], list):
                         action = stmt['Action']
+                    elif isinstance(stmt['Action'], list):
+                        action = " ".join(stmt['Action'])
                 if 'Principal' in stmt:
                     princ = stmt['Principal']
                 if 'Resource' in stmt:
@@ -115,6 +113,8 @@ for user in all_users['Users']:
                         rsc = stmt['Resource']
                 if 'Condition' in stmt:
                     cond = stmt['Condition']
+                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Action", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', '{3}', ARRAY{4}, '{5}', {6});'''.format(effect, sid, action, princ, rsc, json.dumps(cond), id))
+                conn.commit()
         elif isinstance(statement, dict):
             if 'Effect' in statement:
                 effect = statement['Effect']
@@ -122,9 +122,9 @@ for user in all_users['Users']:
                 sid = statement['Sid']
             if 'Action' in statement:
                 if not isinstance(statement['Action'], list):
-                    action = list(statement['Action'].split(" "))
-                elif isinstance(statement['Action'], list):
                     action = statement['Action']
+                elif isinstance(statement['Action'], list):
+                    action = " ".join(statement['Action'])
             if 'Principal' in statement:
                 princ = statement['Principal']
             if 'Resource' in statement:
@@ -135,8 +135,8 @@ for user in all_users['Users']:
             if 'Condition' in statement:
                 cond = statement['Condition']
         
-        cursor.execute('''INSERT INTO "Statement"("Effect", "Sid", "Action", "Principal", "Resource", "Condition", "WholeStatement", "Statementid") VALUES('{0}', '{1}', ARRAY{2}, '{3}', ARRAY{4}, '{5}', '{6}', {7}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(effect, sid, action, princ, rsc, json.dumps(cond), json.dumps(statement), id))
-        conn.commit()
+            cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Action", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', '{3}', ARRAY{4}, '{5}', {6});'''.format(effect, sid, action, princ, rsc, json.dumps(cond), id))
+            conn.commit()
 
 
     # check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
@@ -157,7 +157,7 @@ for user in all_users['Users']:
                 cursor.execute('''INSERT INTO "Identity"("Name", "ARN", "Type") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING;'''.format(role_name, role_arn, "Role"))
                 cursor.execute('''INSERT INTO "Assume"("IAM_UserARN", "IdentityARN") VALUES('{0}', '{1}') ON CONFLICT ("IAM_UserARN", "IdentityARN") DO NOTHING;'''.format(user_arn, role_arn))
                 conn.commit()
-                logging.info('Getting role policies for roles the IAM user can assume')
+                logging.info('Getting role policies for roles ' + IAM_user+ ' can assume')
                 role_policies = client.list_attached_role_policies(
                     RoleName = role_name
                 )
@@ -175,9 +175,9 @@ for user in all_users['Users']:
                         id = resp[0]
                         cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(role_arn, id))
                         conn.commit()
-                        extract_statement(policy_version['Document']['Statement'], id)
-                        # cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
-                        # conn.commit()
+                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                        conn.commit()
+                        extract_permissions(policy_version['Document']['Statement'], id)
         elif 'Document' in policy:
             for key in policy['Document']['Statement']:
                 if assume_role == False:
@@ -191,7 +191,7 @@ for user in all_users['Users']:
                 cursor.execute('''INSERT INTO "Identity"("Name", "ARN", "Type") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING;'''.format(role_name, role_arn, "Role"))
                 cursor.execute('''INSERT INTO "Assume"("IAM_UserARN", "IdentityARN") VALUES('{0}', '{1}') ON CONFLICT ("IAM_UserARN", "IdentityARN") DO NOTHING;'''.format(user_arn, role_arn))
                 conn.commit()
-                logging.info('Getting role policies for roles the IAM user can assume')
+                logging.info('Getting role policies for roles ' + IAM_user+ ' user can assume')
                 role_policies = client.list_attached_role_policies(
                     RoleName = role_name
                 )
@@ -209,9 +209,10 @@ for user in all_users['Users']:
                         id = resp[0]
                         cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(role_arn, id))
                         conn.commit()
-                        extract_statement(policy_version['Document']['Statement'], id)
-                        # cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
-                        # conn.commit()
+                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                        conn.commit()
+                        extract_permissions(policy_version['Document']['Statement'], id)
+                        
 
 
     # get the inline polcies' permissions and INSERT to database
@@ -227,7 +228,9 @@ for user in all_users['Users']:
             id = resp[0]
             cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(user_arn, id))
             conn.commit()
-            extract_statement(policy['PolicyDocument']['Statement'], id)
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
+            conn.commit()
+            extract_permissions(policy['PolicyDocument']['Statement'], id)
             
 
 
@@ -247,9 +250,10 @@ for user in all_users['Users']:
             id = resp[0]
             cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(user_arn, id))
             conn.commit()
-            extract_statement(policy_version['Document']['Statement'], id)
-            # cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
-            # conn.commit()
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+            conn.commit()
+            extract_permissions(policy_version['Document']['Statement'], id)
+            
 
 
     # get the group polcies' permissions and INSERT to database
@@ -270,9 +274,10 @@ for user in all_users['Users']:
                     id = resp[0]
                     cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(group['Arn'], id))
                     conn.commit()
-                    extract_statement(policy_version['Document']['Statement'], id)
-                    # cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
-                    # conn.commit()
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                    conn.commit()
+                    extract_permissions(policy_version['Document']['Statement'], id)
+                    
             for igpolicy in inline_group_policies['PolicyNames']:
                 ipolicy = client.get_group_policy(
                     GroupName = group['GroupName'],
@@ -285,8 +290,9 @@ for user in all_users['Users']:
                     id = resp[0]
                     cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(group['Arn'], id))
                     conn.commit()
-                    extract_statement(ipolicy['PolicyDocument']['Statement'], id)
-                    # cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
-                    # conn.commit()
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
+                    conn.commit()
+                    extract_permissions(ipolicy['PolicyDocument']['Statement'], id)
+                    
 
 
