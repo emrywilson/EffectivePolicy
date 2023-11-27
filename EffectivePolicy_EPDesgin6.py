@@ -25,7 +25,7 @@ client = session.client('iam')
 #connect to database
 password = args.dbpassword
 conn = psycopg2.connect(
-   database='postgres', user='postgres', password=password, host='localhost', port= '5432'
+   database='effectivepolicy', user='postgres', password=password, host='localhost', port= '5432'
 )
 cursor = conn.cursor()
 
@@ -99,32 +99,26 @@ for user in all_users['Users']:
                     effect = stmt["Effect"]
                 if 'Sid' in stmt:
                     sid = stmt['Sid']
-                if 'Action' in stmt:
-                    if not isinstance(stmt['Action'], list):
-                        action = stmt['Action']
-                    elif isinstance(stmt['Action'], list):
-                        action = " ".join(stmt['Action'])
+                
                 if 'Principal' in stmt:
                     princ = stmt['Principal']
-                if 'Condition' in stmt:
-                    cond = stmt['Condition']
                 if 'Resource' in stmt:
                     if not isinstance(stmt['Resource'], list):
-                        rsc = stmt['Resource']
+                        rsc = list(stmt['Resource'].split(" "))
                     elif isinstance(stmt['Resource'], list):
-                        rsc = ", ".join(stmt['Resource'])
-                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', '{3}', {4}) RETURNING "Permissionid";'''.format(effect, sid, princ, json.dumps(cond), id))
-                resp = cursor.fetchone()
-                id = resp[0]
+                        rsc = stmt['Resource']
+                if 'Condition' in stmt:
+                    cond = stmt['Condition']
+                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id))
+                permid = cursor.fetchone()[0]
+                conn.commit()
                 if 'Action' in stmt:
                     if not isinstance(stmt['Action'], list):
                         action = stmt['Action']
-                        cursor.execute('''INSERT INTO "Action"("Permissionid", "Name", "Resources") VALUES({0}, '{1}', '{2}') RETURNING "Actionid";'''.format(id, action, rsc))
-                        conn.commit()
+                        cursor.execute('''INSERT INTO "Action"("Name", "Permissionid") VALUES('{0}', {1});'''.format(action, permid))
                     elif isinstance(stmt['Action'], list):
                         for action in stmt['Action']:
-                            cursor.execute('''INSERT INTO "Action"("Permissionid", "Name", "Resources") VALUES({0}, '{1}', '{2}') RETURNING "Actionid";'''.format(id, action, rsc))
-                            conn.commit()    
+                            cursor.execute('''INSERT INTO "Action"("Name", "Permissionid") VALUES('{0}', {1});'''.format(action, permid))
         elif isinstance(statement, dict):
             if 'Effect' in statement:
                 effect = statement['Effect']
@@ -132,25 +126,23 @@ for user in all_users['Users']:
                 sid = statement['Sid']
             if 'Principal' in statement:
                 princ = statement['Principal']
-            if 'Condition' in statement:
-                cond = statement['Condition']
             if 'Resource' in statement:
                 if not isinstance(statement['Resource'], list):
                     rsc = list(statement['Resource'].split(" "))
                 elif isinstance(statement['Resource'], list):
                     rsc = statement['Resource']
-            cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', '{3}', {4}) RETURNING "Permissionid";'''.format(effect, sid, princ, json.dumps(cond), id))
-            resp = cursor.fetchone()
-            id = resp[0]
+            if 'Condition' in statement:
+                cond = statement['Condition']
+            cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id))
+            permid = cursor.fetchone()[0]
+            conn.commit()
             if 'Action' in statement:
                 if not isinstance(statement['Action'], list):
                     action = statement['Action']
-                    cursor.execute('''INSERT INTO "Action"("Permissionid", "Name", "Resources") VALUES({0}, '{1}', '{2}') RETURNING "Actionid";'''.format(id, action, rsc))
-                    conn.commit()
+                    cursor.execute('''INSERT INTO "Action"("Name", "Permissionid") VALUES('{0}', {1});'''.format(action, permid))
                 elif isinstance(statement['Action'], list):
                     for action in statement['Action']:
-                        cursor.execute('''INSERT INTO "Action"("Permissionid", "Name", "Resources") VALUES({0}, '{1}', '{2}') RETURNING "Actionid";'''.format(id, action, rsc))
-                        conn.commit() 
+                        cursor.execute('''INSERT INTO "Action"("Name", "Permissionid") VALUES('{0}', {1});'''.format(action, permid))
 
 
     # check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
