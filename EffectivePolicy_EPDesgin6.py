@@ -8,11 +8,19 @@ logger = logging.getLogger()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('profile', help='base aws profile to use')
+parser.add_argument('database', help='database to connect to')
+parser.add_argument('database_user', help='database user')
 parser.add_argument('dbpassword', help='password to access database')
+parser.add_argument('host', help='host')
+parser.add_argument('port', help='port')
 parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
 args = parser.parse_args()
 profile_name = args.profile
-password = args.dbpassword
+database = args.database
+database_user = args.database_user
+db_password = args.dbpassword
+db_host = args.host
+db_port = args.port
 
 if args.verbose:
     logger.setLevel(logging.DEBUG)
@@ -25,7 +33,7 @@ client = session.client('iam')
 #connect to database
 password = args.dbpassword
 conn = psycopg2.connect(
-   database='effectivepolicy', user='postgres', password=password, host='localhost', port= '5432'
+   database=database, user=database_user, password=db_password, host=db_host, port=db_port
 )
 cursor = conn.cursor()
 
