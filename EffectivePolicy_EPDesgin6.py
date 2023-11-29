@@ -99,7 +99,7 @@ for user in all_users['Users']:
         action =""
         princ = ""
         rsc = ""
-        cond = None
+        cond = ""
         if isinstance(statement, list):
             for stmt in statement:
                 if 'Effect' in stmt:
@@ -115,8 +115,8 @@ for user in all_users['Users']:
                     elif isinstance(stmt['Resource'], list):
                         rsc = stmt['Resource']
                 if 'Condition' in stmt:
-                    cond = stmt['Condition']
-                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id))
+                    cond = json.dumps(stmt['Condition'])
+                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, cond, id))
                 permid = cursor.fetchone()[0]
                 conn.commit()
                 if 'Action' in stmt:
