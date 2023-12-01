@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import boto3
 import argparse
@@ -97,6 +98,7 @@ for user in all_users['Users']:
         princ = ""
         rsc = ""
         cond = ""
+        dt = str(datetime.now())
         if isinstance(statement, list):
             for stmt in statement:
                 if 'Effect' in stmt:
@@ -112,7 +114,7 @@ for user in all_users['Users']:
                         rsc = stmt['Resource']
                 if 'Condition' in stmt:
                     cond = json.dumps(stmt['Condition'])
-                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, cond, id))
+                cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid", "LastUpdated") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}, '{6}') RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, cond, id, dt))
                 permid = cursor.fetchone()[0]
                 conn.commit()
                 if 'Action' in stmt:
@@ -135,8 +137,8 @@ for user in all_users['Users']:
                 elif isinstance(statement['Resource'], list):
                     rsc = statement['Resource']
             if 'Condition' in statement:
-                cond = statement['Condition']
-            cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id))
+                cond = json.dumps(statement['Condition'])
+            cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid", "LastUpdated") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}, '{6}') RETURNING "Permissionid";'''.format(effect, sid, princ, rsc, cond, id, dt))
             permid = cursor.fetchone()[0]
             conn.commit()
             if 'Action' in statement:
@@ -148,7 +150,69 @@ for user in all_users['Users']:
                         cursor.execute('''INSERT INTO "Action"("Name", "Permissionid") VALUES('{0}', {1});'''.format(action, permid))
 
     def extract_permissions_for_update(statement, id):
-        return None
+        cursor.execute('''SELECT "Permissionid" FROM "Permission" WHERE "Statementid" = {0};'''.format(id))
+        permid_list = cursor.fetchone()
+        for permid in permid_list:
+            effect = ""
+            sid = ""
+            action =""
+            princ = ""
+            rsc = ""
+            cond = ""
+            if isinstance(statement, list):
+                for stmt in statement:
+                    if 'Effect' in stmt:
+                        effect = stmt["Effect"]
+                    if 'Sid' in stmt:
+                        sid = stmt['Sid']
+                    if 'Principal' in stmt:
+                        princ = stmt['Principal']
+                    if 'Resource' in stmt:
+                        if not isinstance(stmt['Resource'], list):
+                            rsc = list(stmt['Resource'].split(" "))
+                        elif isinstance(stmt['Resource'], list):
+                            rsc = stmt['Resource']
+                    if 'Condition' in stmt:
+                        cond = json.dumps(stmt['Condition'])
+                    cursor.execute('''UPDATE "Permission" SET "Effect" = '{1}', "Sid" = '{2}', "Principal" = '{3}', "Resource" = ARRAY{3}, "Condition" = '{4}', "Statementid" = {5} WHERE "Permissionid" = {6};'''.format(effect, sid, princ, rsc, cond, id, permid))
+                    print(permid)
+
+                    #cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) ON CONFLICT ("Permissionid") DO UPDATE SET "Effect"=EXCLUDED."Effect", "Sid"=EXCLUDED."Sid", "Principal"=EXCLUDED."Principal", "Resource"=EXCLUDED."Resource", "Condition"=EXCLUDED."Condition", "Statementid"=EXCLUDED."Statementid", "Permissionid"=EXCLUDED."Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id, permid))
+                    conn.commit()
+                    if 'Action' in stmt:
+                        if not isinstance(stmt['Action'], list):
+                            action = stmt['Action']
+                            cursor.execute('''INSERT INTO "Action" ("Name", "Permissionid") Values('{0}', {1}) ON CONFLICT ("Actionid") DO UPDATE SET "Name"=EXCLUDED."Name", "Permissionid"=EXCLUDED."Permissionid";'''.format(action, permid))
+                        elif isinstance(stmt['Action'], list):
+                            for action in stmt['Action']:
+                                cursor.execute('''INSERT INTO "Action" ("Name", "Permissionid") Values('{0}', {1}) ON CONFLICT ("Actionid") DO UPDATE SET "Name"=EXCLUDED."Name", "Permissionid"=EXCLUDED."Permissionid";'''.format(action, permid))
+            elif isinstance(statement, dict):
+                if 'Effect' in statement:
+                    effect = statement['Effect']
+                if 'Sid' in statement:
+                    sid = statement['Sid']
+                if 'Principal' in statement:
+                    princ = statement['Principal']
+                if 'Resource' in statement:
+                    if not isinstance(statement['Resource'], list):
+                        rsc = list(statement['Resource'].split(" "))
+                    elif isinstance(statement['Resource'], list):
+                        rsc = statement['Resource']
+                if 'Condition' in statement:
+                    cond = json.dumps(statement['Condition'])
+                print(permid)
+                cursor.execute('''UPDATE "Permission" SET "Effect" = '{1}', "Sid" = '{2}', "Principal" = '{3}', "Resource" = ARRAY{3}, "Condition" = '{4}', "Statementid" = {5} WHERE "Permissionid" = {6};'''.format(effect, sid, princ, rsc, cond, id, permid))
+
+                #cursor.execute('''INSERT INTO "Permission"("Effect", "Sid", "Principal", "Resource", "Condition", "Statementid") VALUES('{0}', '{1}', '{2}', ARRAY{3}, '{4}', {5}) ON CONFLICT ("Permissionid") DO UPDATE SET "Effect"=EXCLUDED."Effect", "Sid"=EXCLUDED."Sid", "Principal"=EXCLUDED."Principal", "Resource"=EXCLUDED."Resource", "Condition"=EXCLUDED."Condition", "Statementid"=EXCLUDED."Statementid", "Permissionid"=EXCLUDED."Permissionid";'''.format(effect, sid, princ, rsc, json.dumps(cond), id, permid))
+                conn.commit()
+                if 'Action' in statement:
+                    if not isinstance(statement['Action'], list):
+                        action = statement['Action']
+                        cursor.execute('''INSERT INTO "Action" ("Name", "Permissionid") Values('{0}', {1}) ON CONFLICT ("Actionid") DO UPDATE SET "Name"=EXCLUDED."Name", "Permissionid"=EXCLUDED."Permissionid";'''.format(action, permid))
+                    elif isinstance(statement['Action'], list):
+                        for action in statement['Action']:
+                            cursor.execute('''INSERT INTO "Action" ("Name", "Permissionid") Values('{0}', {1}) ON CONFLICT ("Actionid") DO UPDATE SET "Name"=EXCLUDED."Name", "Permissionid"=EXCLUDED."Permissionid";'''.format(action, permid))
+
 
 
     # check if any user policy has the AssumeRole action, if so, get the policies for the roles that can be assumed
@@ -184,10 +248,11 @@ for user in all_users['Users']:
                     cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING RETURNING "Statementid";'''.format(rpolicy['PolicyArn'], 'Inline', rpolicy['PolicyName']))
                     resp = cursor.fetchone()
                     if resp != None:
+                        dt = datetime.now()
                         id = resp[0]
                         cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(role_arn, id))
                         conn.commit()
-                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
                         conn.commit()
                         extract_permissions_for_insert(policy_version['Document']['Statement'], id)
         elif 'Document' in policy:
@@ -218,10 +283,11 @@ for user in all_users['Users']:
                     cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}')  ON CONFLICT ("ARN") DO NOTHING RETURNING "Statementid";'''.format(rpolicy['PolicyArn'], 'Managed', rpolicy['PolicyName']))
                     resp = cursor.fetchone()
                     if resp != None:
+                        dt = datetime.now()
                         id = resp[0]
                         cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(role_arn, id))
                         conn.commit()
-                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                        cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
                         conn.commit()
                         extract_permissions_for_insert(policy_version['Document']['Statement'], id)
                         
@@ -238,18 +304,20 @@ for user in all_users['Users']:
         cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') ON CONFLICT ("Name") DO NOTHING RETURNING "Statementid";'''.format('Inline', ipolicy))
         resp = cursor.fetchone()
         if resp != None:
+            dt = datetime.now()
             id = resp[0]
             cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(user_arn, id))
             conn.commit()
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement";'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy['PolicyDocument']['Statement']), id, dt))
             conn.commit()
             extract_permissions_for_insert(policy['PolicyDocument']['Statement'], id)
         elif resp == None:
+            dt = datetime.now()
             cursor.execute('''SELECT "Statementid" FROM "Policy" WHERE "Policy"."Type" = '{0}' AND "Policy"."Name" = '{1}';'''.format('Inline', ipolicy))
             id = cursor.fetchone()[0]
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement";'''.format(json.dumps(policy['PolicyDocument']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement", "LastUpdated"=EXCLUDED."LastUpdated";'''.format(json.dumps(policy['PolicyDocument']['Statement']), id, dt))
             conn.commit()
-            extract_permissions_for_update(policy['PolicyDocument']['Statement'], id)
+            #extract_permissions_for_update(policy['PolicyDocument']['Statement'], id)
             
 
 
@@ -267,18 +335,20 @@ for user in all_users['Users']:
         cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING RETURNING "Statementid";'''.format(mpolicy['PolicyArn'], 'Managed', mpolicy['PolicyName']))
         resp = cursor.fetchone()
         if resp != None:
+            dt = datetime.now()
             id = resp[0]
             cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(user_arn, id))
             conn.commit()
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
             conn.commit()
             extract_permissions_for_insert(policy_version['Document']['Statement'], id)
         elif resp == None:
+            dt = datetime.now()
             cursor.execute('''SELECT "Statementid" FROM "Policy" WHERE "Policy"."ARN" = '{0}' AND "Policy"."Type" = '{1}' AND "Policy"."Name" = '{2}';'''.format(mpolicy['PolicyArn'], 'Managed', mpolicy['PolicyName']))
             id = cursor.fetchone()[0]
-            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement";'''.format(json.dumps(policy_version['Document']['Statement']), id))
+            cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement", "LastUpdated"=EXCLUDED."LastUpdated";'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
             conn.commit()
-            extract_permissions_for_update(policy_version['Document']['Statement'], id)
+            #extract_permissions_for_update(policy_version['Document']['Statement'], id)
             
 
 
@@ -298,18 +368,20 @@ for user in all_users['Users']:
                 cursor.execute('''INSERT INTO "Policy"("ARN", "Type", "Name") VALUES('{0}', '{1}', '{2}') ON CONFLICT ("ARN") DO NOTHING RETURNING "Statementid";'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
                 resp = cursor.fetchone()
                 if resp != None:
+                    dt = datetime.now()
                     id = resp[0]
                     cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(group['Arn'], id))
                     conn.commit()
-                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
                     conn.commit()
                     extract_permissions_for_insert(policy_version['Document']['Statement'], id)
                 elif resp == None:
+                    dt = datetime.now()
                     cursor.execute('''SELECT "Statementid" FROM "Policy" WHERE "Policy"."ARN" = '{0}' AND "Policy"."Type" = '{1}' AND "Policy"."Name" = '{2}';'''.format(gpolicy['PolicyArn'], 'Managed', gpolicy['PolicyName']))
                     id = cursor.fetchone()[0]
-                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement";'''.format(json.dumps(policy_version['Document']['Statement']), id))
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement", "LastUpdated"=EXCLUDED."LastUpdated";;'''.format(json.dumps(policy_version['Document']['Statement']), id, dt))
                     conn.commit()
-                    extract_permissions_for_update(policy_version['Document']['Statement'], id)
+                    #extract_permissions_for_update(policy_version['Document']['Statement'], id)
                     
             for igpolicy in inline_group_policies['PolicyNames']:
                 ipolicy = client.get_group_policy(
@@ -320,18 +392,20 @@ for user in all_users['Users']:
                 cursor.execute('''INSERT INTO "Policy"("Type", "Name") VALUES('{0}', '{1}') ON CONFLICT ("Name") DO NOTHING RETURNING "Statementid";'''.format('Inline', igpolicy))
                 resp = cursor.fetchone()
                 if resp != None:
+                    dt = datetime.now()
                     id = resp[0]
                     cursor.execute('''INSERT INTO "Assign"("IdentityARN", "Policyid") VALUES('{0}', {1}) ON CONFLICT ("Policyid", "IdentityARN") DO NOTHING;'''.format(group['Arn'], id))
                     conn.commit()
-                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO NOTHING;'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id, dt))
                     conn.commit()
                     extract_permissions_for_insert(ipolicy['PolicyDocument']['Statement'], id)
                 elif resp == None:
+                    dt = datetime.now()
                     cursor.execute('''SELECT "Statementid" FROM "Policy" WHERE "Policy"."Type" = '{0}' AND "Policy"."Name" = '{1}';'''.format('Inline', igpolicy))
                     id = cursor.fetchone()[0]
-                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid") VALUES('{0}', {1}) ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement";'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id))
+                    cursor.execute('''INSERT INTO "Statement"("WholeStatement", "Statementid", "LastUpdated") VALUES('{0}', {1}, '{2}') ON CONFLICT ("Statementid") DO UPDATE SET "WholeStatement" = EXCLUDED."WholeStatement", "LastUpdated"=EXCLUDED."LastUpdated";'''.format(json.dumps(ipolicy['PolicyDocument']['Statement']), id, dt))
                     conn.commit()
-                    extract_permissions_for_update(ipolicy['PolicyDocument']['Statement'], id)
+                    #extract_permissions_for_update(ipolicy['PolicyDocument']['Statement'], id)
                 
                     
 
